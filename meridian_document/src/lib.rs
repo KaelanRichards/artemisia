@@ -1,4 +1,6 @@
 mod history;
+pub mod blend;
+pub mod serialization;
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -7,6 +9,8 @@ use parking_lot::RwLock;
 use serde::{Serialize, Deserialize};
 use thiserror::Error;
 use uuid::Uuid;
+use image::DynamicImage;
+pub use blend::BlendMode;
 pub use history::{History, Command, HistoryError};
 
 #[derive(Error, Debug)]
@@ -19,6 +23,8 @@ pub enum DocumentError {
     InvalidOperation(String),
     #[error("History error: {0}")]
     HistoryError(#[from] HistoryError),
+    #[error("Blend error: {0}")]
+    BlendError(String),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -28,15 +34,6 @@ impl LayerId {
     pub fn new() -> Self {
         Self(Uuid::new_v4())
     }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum BlendMode {
-    Normal,
-    Multiply,
-    Screen,
-    Overlay,
-    // Add more blend modes as needed
 }
 
 #[derive(Debug)]
@@ -91,8 +88,8 @@ impl Layer {
         self.opacity = opacity.clamp(0.0, 1.0);
     }
 
-    pub fn blend_mode(&self) -> &BlendMode {
-        &self.blend_mode
+    pub fn blend_mode(&self) -> BlendMode {
+        self.blend_mode
     }
 
     pub fn set_blend_mode(&mut self, mode: BlendMode) {
@@ -109,6 +106,10 @@ impl Layer {
 
     pub fn set_output_node(&mut self, node_id: NodeId) {
         self.output_node = Some(node_id);
+    }
+
+    pub fn output_node(&self) -> Option<&NodeId> {
+        self.output_node.as_ref()
     }
 
     pub fn evaluate(&self) -> Result<Box<dyn std::any::Any>, NodeError> {
@@ -131,31 +132,8 @@ impl Document {
         Self {
             layers: HashMap::new(),
             layer_order: Vec::new(),
-            history: History::new(100), // Store last 100 operations
+            history: History::new(100),
         }
-    }
-
-    pub fn execute_command(&mut self, command: Box<dyn Command>) -> Result<(), DocumentError> {
-        self.history.execute(command)?;
-        Ok(())
-    }
-
-    pub fn undo(&mut self) -> Result<(), DocumentError> {
-        self.history.undo()?;
-        Ok(())
-    }
-
-    pub fn redo(&mut self) -> Result<(), DocumentError> {
-        self.history.redo()?;
-        Ok(())
-    }
-
-    pub fn can_undo(&self) -> bool {
-        self.history.can_undo()
-    }
-
-    pub fn can_redo(&self) -> bool {
-        self.history.can_redo()
     }
 
     pub fn add_layer(&mut self, layer: Layer) -> LayerId {
@@ -203,87 +181,61 @@ impl Document {
 
     pub fn evaluate_all(&self) -> Result<Vec<Box<dyn std::any::Any>>, DocumentError> {
         let mut results = Vec::new();
+        let mut composite = None;
+
         for layer_id in &self.layer_order {
             if let Some(layer) = self.get_layer(layer_id) {
                 let layer = layer.read();
                 if layer.is_visible() {
-                    let result = layer.evaluate()?;
-                    results.push(result);
+                    if let Ok(result) = layer.evaluate() {
+                        if let Some(image) = result.downcast_ref::<DynamicImage>() {
+                            match &mut composite {
+                                Some(comp) => {
+                                    *comp = blend::blend_images(
+                                        comp,
+                                        image,
+                                        layer.blend_mode(),
+                                        layer.opacity(),
+                                    );
+                                }
+                                None => {
+                                    composite = Some(image.clone());
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }
+
+        if let Some(final_image) = composite {
+            results.push(Box::new(final_image));
+        }
+
         Ok(results)
     }
-}
 
-// Add more command implementations
-pub struct SetLayerVisibilityCommand {
-    layer: Arc<RwLock<Layer>>,
-    old_visibility: bool,
-    new_visibility: bool,
-}
-
-impl SetLayerVisibilityCommand {
-    pub fn new(layer: Arc<RwLock<Layer>>, new_visibility: bool) -> Self {
-        let old_visibility = layer.read().is_visible();
-        Self {
-            layer,
-            old_visibility,
-            new_visibility,
-        }
-    }
-}
-
-impl Command for SetLayerVisibilityCommand {
-    fn execute(&self) -> Result<(), Box<dyn std::error::Error>> {
-        self.layer.write().set_visible(self.new_visibility);
+    pub fn execute_command(&mut self, command: Box<dyn Command>) -> Result<(), DocumentError> {
+        self.history.execute(command)?;
         Ok(())
     }
 
-    fn undo(&self) -> Result<(), Box<dyn std::error::Error>> {
-        self.layer.write().set_visible(self.old_visibility);
+    pub fn undo(&mut self) -> Result<(), DocumentError> {
+        self.history.undo()?;
         Ok(())
     }
 
-    fn description(&self) -> &str {
-        if self.new_visibility {
-            "Show Layer"
-        } else {
-            "Hide Layer"
-        }
-    }
-}
-
-pub struct SetLayerOpacityCommand {
-    layer: Arc<RwLock<Layer>>,
-    old_opacity: f32,
-    new_opacity: f32,
-}
-
-impl SetLayerOpacityCommand {
-    pub fn new(layer: Arc<RwLock<Layer>>, new_opacity: f32) -> Self {
-        let old_opacity = layer.read().opacity();
-        Self {
-            layer,
-            old_opacity,
-            new_opacity,
-        }
-    }
-}
-
-impl Command for SetLayerOpacityCommand {
-    fn execute(&self) -> Result<(), Box<dyn std::error::Error>> {
-        self.layer.write().set_opacity(self.new_opacity);
+    pub fn redo(&mut self) -> Result<(), DocumentError> {
+        self.history.redo()?;
         Ok(())
     }
 
-    fn undo(&self) -> Result<(), Box<dyn std::error::Error>> {
-        self.layer.write().set_opacity(self.old_opacity);
-        Ok(())
+    pub fn can_undo(&self) -> bool {
+        self.history.can_undo()
     }
 
-    fn description(&self) -> &str {
-        "Change Layer Opacity"
+    pub fn can_redo(&self) -> bool {
+        self.history.can_redo()
     }
 }
 
@@ -319,30 +271,5 @@ mod tests {
 
         layer.set_visible(false);
         assert!(!layer.is_visible());
-    }
-
-    #[test]
-    fn test_document_history() {
-        let mut doc = Document::new();
-        
-        // Add a layer
-        let layer = Layer::new("Test Layer".to_string());
-        let id = doc.add_layer(layer);
-        
-        // Get the layer
-        let layer = doc.get_layer(&id).unwrap();
-        
-        // Test visibility command
-        let cmd = Box::new(SetLayerVisibilityCommand::new(layer.clone(), false));
-        doc.execute_command(cmd).unwrap();
-        assert!(!layer.read().is_visible());
-        
-        // Test undo
-        doc.undo().unwrap();
-        assert!(layer.read().is_visible());
-        
-        // Test redo
-        doc.redo().unwrap();
-        assert!(!layer.read().is_visible());
     }
 }

@@ -1,7 +1,7 @@
 use std::sync::Arc;
-use egui::{Context, Ui, Window, ScrollArea, TopBottomPanel, SidePanel, CentralPanel, RichText};
+use egui::{Context, Ui, Window, ScrollArea, TopBottomPanel, SidePanel, CentralPanel, RichText, ComboBox};
 use parking_lot::RwLock;
-use meridian_document::{Document, Layer, LayerId};
+use meridian_document::{Document, Layer, LayerId, BlendMode};
 use crate::node_editor::{NodeEditorState, render_node_editor};
 use crate::viewport::{ViewportState, render_viewport};
 use astria_render::Renderer;
@@ -299,7 +299,35 @@ fn render_properties_panel(ctx: &Context, state: &mut UiState, document: Arc<RwL
                         layer.set_opacity(opacity);
                     }
 
-                    // TODO: Add more layer properties
+                    // Blend mode
+                    ui.label("Blend Mode");
+                    ComboBox::from_id_source("blend_mode")
+                        .selected_text(layer.blend_mode().name())
+                        .show_ui(ui, |ui| {
+                            for mode in BlendMode::all() {
+                                let selected = ui.selectable_label(
+                                    layer.blend_mode() == *mode,
+                                    mode.name(),
+                                );
+                                if selected.clicked() {
+                                    layer.set_blend_mode(*mode);
+                                }
+                            }
+                        });
+
+                    // Add separator before node properties
+                    ui.separator();
+                    ui.heading("Node Properties");
+                    
+                    if let Some(node_id) = layer.output_node() {
+                        if let Some(node) = layer.node_graph().get_node(node_id) {
+                            let node = node.read();
+                            ui.label(format!("Output Node: {}", node.type_name()));
+                            // TODO: Add node-specific property controls
+                        }
+                    } else {
+                        ui.colored_label(ui.visuals().warn_fg_color, "No output node selected");
+                    }
                 }
             } else {
                 ui.colored_label(ui.visuals().warn_fg_color, "No layer selected");

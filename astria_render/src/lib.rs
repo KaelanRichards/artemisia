@@ -1,29 +1,31 @@
 use std::sync::Arc;
 use wgpu::util::DeviceExt;
-use winit::window::Window;
 use raw_window_handle::HasWindowHandle;
+use anyhow::Result;
 
 pub struct Renderer {
     surface: wgpu::Surface,
     device: Arc<wgpu::Device>,
-    queue: wgpu::Queue,
+    queue: Arc<wgpu::Queue>,
     config: wgpu::SurfaceConfiguration,
     size: winit::dpi::PhysicalSize<u32>,
 }
 
 impl Renderer {
     pub async fn new<W: HasWindowHandle>(window: &W) -> Self {
-        let size = window.window_handle().unwrap().as_raw().get_inner_size().unwrap();
+        let window_handle = window.window_handle().unwrap();
+        let size = winit::dpi::PhysicalSize::new(800, 600); // Default size
 
         // Create instance
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
             backends: wgpu::Backends::all(),
-            ..Default::default()
+            dx12_shader_compiler: Default::default(),
         });
 
-        // Create surface
-        let surface = unsafe { instance.create_surface(window.window_handle().unwrap().as_raw()) }
-            .expect("Failed to create surface");
+        // Create surface safely
+        let surface = unsafe { 
+            instance.create_surface_unsafe(wgpu::SurfaceTargetUnsafe::from_window_handle(window_handle))
+        }.expect("Failed to create surface");
 
         // Get adapter
         let adapter = instance
@@ -33,7 +35,7 @@ impl Renderer {
                 force_fallback_adapter: false,
             })
             .await
-            .expect("Failed to find appropriate adapter");
+            .expect("Failed to find an appropriate adapter");
 
         // Create device and queue
         let (device, queue) = adapter
@@ -49,6 +51,7 @@ impl Renderer {
             .expect("Failed to create device");
 
         let device = Arc::new(device);
+        let queue = Arc::new(queue);
 
         // Configure surface
         let surface_caps = surface.get_capabilities(&adapter);
@@ -64,7 +67,7 @@ impl Renderer {
             format: surface_format,
             width: size.width,
             height: size.height,
-            present_mode: surface_caps.present_modes[0],
+            present_mode: wgpu::PresentMode::Fifo,
             alpha_mode: surface_caps.alpha_modes[0],
             view_formats: vec![],
         };
@@ -89,17 +92,21 @@ impl Renderer {
         }
     }
 
-    pub fn render(&mut self) -> Result<(), wgpu::SurfaceError> {
-        let output = self.surface.get_current_texture()?;
-        let view = output
-            .texture
-            .create_view(&wgpu::TextureViewDescriptor::default());
+    pub fn device(&self) -> &Arc<wgpu::Device> {
+        &self.device
+    }
 
-        let mut encoder = self
-            .device
-            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("Render Encoder"),
-            });
+    pub fn queue(&self) -> &Arc<wgpu::Queue> {
+        &self.queue
+    }
+
+    pub fn render(&self) -> Result<()> {
+        let output = self.surface.get_current_texture()?;
+        let view = output.texture.create_view(&wgpu::TextureViewDescriptor::default());
+
+        let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("Render Encoder"),
+        });
 
         {
             let _render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -114,12 +121,10 @@ impl Renderer {
                             b: 0.3,
                             a: 1.0,
                         }),
-                        store: wgpu::StoreOp::Store,
+                        store: true,
                     },
                 })],
                 depth_stencil_attachment: None,
-                timestamp_writes: None,
-                occlusion_query_set: None,
             });
         }
 
@@ -127,18 +132,6 @@ impl Renderer {
         output.present();
 
         Ok(())
-    }
-
-    pub fn device(&self) -> Arc<wgpu::Device> {
-        self.device.clone()
-    }
-
-    pub fn queue(&self) -> &wgpu::Queue {
-        &self.queue
-    }
-
-    pub fn size(&self) -> winit::dpi::PhysicalSize<u32> {
-        self.size
     }
 }
 

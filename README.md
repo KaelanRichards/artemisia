@@ -1,199 +1,109 @@
 # Artemisia
 
-> A node-based, AI-enabled, 2D/3D graphics creation tool combining procedural workflows, vector/raster editing, and advanced AI image generation into a single unified environment. The goal is to empower artists and creators with a flexible, future-proof, and extensible platform for producing digital art, designs, and visual effects.
+A powerful node-based image processing application built with Rust.
 
-## 🎯 Project Vision
+## Features
 
-Artemisia aims to redefine digital content creation workflows by blending ideas from:
+### Core System
 
-- Traditional layer-based raster and vector editors
-- Nondestructive, node-based compositing and procedural generation (inspired by film VFX tools)
-- Parametric and generative workflows from 3D industry tools
-- AI-driven image synthesis and augmentation
+- Node-based processing pipeline
+- Real-time preview rendering
+- Undo/redo support
+- File format support: PNG, JPEG
+- Project serialization and loading
 
-### Key Features
+### Image Processing Nodes
 
-- **Hybrid 2D/3D Editing**: Work with both vector shapes and raster imagery, as well as procedural 3D scenes and objects
-- **Node-Based Graph Engine**: A graph-based interface (Aurion Core) that allows nondestructive, procedural editing
-- **AI-Enhanced Workflows**: Seamlessly integrate with AI image generation tools
-- **Scalability and Modularity**: A modular Rust codebase designed for extensibility
+- Basic Operations:
+  - Image loading and saving
+  - Color adjustments (brightness, contrast, saturation)
+  - AI-powered image generation
+- Filters:
+  - Gaussian Blur: Smooth images with adjustable sigma
+  - Brightness/Contrast: Fine-tune image luminance
+  - HSL Adjustment: Control hue, saturation, and lightness
+  - Sharpen: Enhance image details with adjustable intensity
 
-### The Result is a Versatile Tool For
+### Layer System
 
-- **2D**: Edit vector shapes, masks, and pixel-based layers procedurally, at infinite resolution
-- **3D**: Incorporate geometry nodes, materials, and lighting into the scene graph
-- **AI**: Instantly generate new imagery, textures, or transformations powered by cutting-edge AI models
+- Multiple layer support
+- Layer blending modes
+- Layer opacity control
+- Non-destructive editing
 
-## 🏗 Architecture Overview
+### User Interface
 
-Artemisia's architecture is divided into modular Rust crates:
+- Modern, intuitive node editor
+- Real-time node graph visualization
+- Interactive parameter controls
+- Layer management panel
+- Viewport with zoom and pan controls
 
-### Core Components
+## Installation
 
-#### `aurion_core`
+1. Ensure you have Rust installed (1.70.0 or later)
+2. Clone the repository:
 
-- **Role**: The node graph engine
-- **Responsibility**: Defines nodes, manages their evaluation, and handles data flow
-- **Key Files**: `aurion_core/src/lib.rs` (defines Node, NodeGraph)
-
-#### `aurion_std_nodes`
-
-- **Role**: Standard library of built-in nodes
-- **Features**: Color fill, shape generation, raster filters, AI integration nodes
-- **Key Integration**: AI nodes that communicate with ComfyUI via HTTP
-- **Key Files**: `aurion_std_nodes/src/lib.rs`
-
-#### `meridian_document`
-
-- **Role**: Document model management
-- **Features**: Layers, node subgraphs, serialization, undo/redo, metadata
-- **Key Files**: `meridian_document/src/lib.rs`
-
-#### `astria_render`
-
-- **Role**: 2D/3D rendering pipeline
-- **Features**: GPU-accelerated rendering (via wgpu)
-- **Key Files**: `astria_render/src/lib.rs`
-
-### Application Layer
-
-#### `polaris_app`
-
-- **Role**: Application orchestration
-- **Features**: User actions, tools, UI-document bridge
-- **Key Files**: `polaris_app/src/main.rs`
-
-#### `solaris_ui_desktop`
-
-- **Role**: Desktop UI frontend
-- **Features**: Windows, input events, node graphs, layers, timelines, viewports
-- **Key Files**: `solaris_ui_desktop/src/main.rs`
-
-#### `aurion_plugins`
-
-- **Role**: Plugin architecture support
-- **Features**: Custom nodes, tools, third-party integrations
-- **Key Files**: `aurion_plugins/src/lib.rs`
-
-## 🔧 Development Setup
-
-### Prerequisites
-
-- Xcode Command Line Tools (macOS)
-- Rust (via Rustup)
-- Python 3.x (for AI components)
-
-### Quick Start
-
-1. **Install Rust**:
-
-   ```bash
-   curl --proto '=https' --tlsv1.2 https://sh.rustup.rs -sSf | sh
-   source $HOME/.cargo/env
-   ```
-
-2. **Clone and Setup**:
-
-   ```bash
-   git clone https://github.com/KaelanRichards/artemisia.git
-   cd artemisia
-   git submodule update --init --recursive
-   ```
-
-3. **Build and Run**:
-   ```bash
-   cargo build
-   cargo run -p polaris_app     # Run the app
-   cargo run -p solaris_ui_desktop  # Run the UI
-   ```
-
-## 🤖 ComfyUI Integration
-
-ComfyUI is integrated as a Git submodule and serves as our AI backend for image generation and manipulation.
-
-### Managing the ComfyUI Submodule
-
-1. **Update ComfyUI** (when needed):
-
-   ```bash
-   git submodule update --remote ComfyUI
-   git add ComfyUI
-   git commit -m "Update ComfyUI submodule"
-   git push
-   ```
-
-2. **Setup ComfyUI Environment**:
-   ```bash
-   cd ComfyUI
-   python3 -m venv venv
-   source venv/bin/activate
-   pip install -r requirements.txt
-   python main.py
-   ```
-
-### Using ComfyUI in Artemisia
-
-ComfyUI runs as a local server (default: http://127.0.0.1:8188) and integrates with our node system through:
-
-1. **AI Nodes**: Located in `aurion_std_nodes`, these nodes communicate with ComfyUI via HTTP
-2. **Workflow Integration**: Nodes can send prompts and receive generated images
-3. **Real-time Processing**: Results are automatically integrated into the node graph
-
-Example integration in `aurion_std_nodes`:
-
-```rust
-// AI Image Generation Node
-pub struct AiImageGenNode {
-    prompt: String,
-}
-
-impl AiImageGenNode {
-    pub fn run(&self) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
-        // ComfyUI API interaction
-        let resp = client.post("http://127.0.0.1:8188/run_workflow")
-            .json(&request_body)
-            .send()?;
-        // Process and return image data
-    }
-}
+```bash
+git clone https://github.com/yourusername/artemisia.git
+cd artemisia
 ```
 
-### Future ComfyUI Enhancements
+3. Build and run:
 
-- Asynchronous processing for better UI responsiveness
-- Result caching for repeated prompts
-- Custom workflow templates
-- Extended model support
+```bash
+cargo run --release
+```
 
-## 🔄 Data Flow
+## Usage
 
-1. **User Interactions**
+### Basic Workflow
 
-   - User selects nodes/tools in Solaris UI
-   - Commands sent to Polaris App
+1. Create a new project
+2. Add image nodes by dragging from the node palette
+3. Connect nodes by dragging from output to input ports
+4. Adjust parameters using the node properties panel
+5. Export your processed image
 
-2. **Processing**
-   - Document updates in Meridian
-   - Node graph evaluation in Aurion Core
-   - AI operations via ComfyUI
-   - Final rendering through Astria Render
+### Node Types
 
-## 🚀 Future Directions
+#### Image Input/Output
 
-- **3D Integration**: Advanced geometry nodes, PBR materials, lighting
-- **Vector/Raster Operations**: Boolean operations, parametric curves, filters
-- **Animation**: Timeline support, keyframes, animated AI prompts
-- **Distributed Rendering**: Cloud-based computation
-- **Plugin Ecosystem**: Third-party nodes and tools
+- `Image`: Load images from disk
+- `AiImageGen`: Generate images using AI
 
-## 📝 Contributing
+#### Color Adjustments
 
-Contributions are welcome! Please read our contributing guidelines and code of conduct.
+- `ColorAdjust`: Basic color correction
+- `BrightnessContrast`: Advanced brightness and contrast control
+- `HSL`: Fine-tune hue, saturation, and lightness
 
-## 📄 License
+#### Filters
 
-[Choose an appropriate license]
+- `GaussianBlur`: Smooth images with controllable blur radius
+- `Sharpen`: Enhance image details and edges
 
----
+## Development
 
-> **Note**: This README is intentionally thorough to serve as a comprehensive reference for both users and AI assistants helping with the project.
+### Project Structure
+
+- `aurion_core`: Core node system and graph processing
+- `aurion_std_nodes`: Standard node implementations
+- `astria_render`: GPU-accelerated rendering pipeline
+- `meridian_document`: Document and project management
+- `solaris_ui_desktop`: Desktop user interface
+
+### Adding New Nodes
+
+1. Create a new node type in `aurion_std_nodes`
+2. Implement the `NodeData` trait
+3. Add a corresponding factory in `factories.rs`
+4. Register the node in the UI system
+
+## Contributing
+
+Contributions are welcome! Please feel free to submit a Pull Request.
+
+## License
+
+This project is licensed under the MIT License - see the LICENSE file for details.

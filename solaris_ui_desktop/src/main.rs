@@ -43,10 +43,11 @@ impl App {
         
         let egui_state = State::new(&event_loop);
         let renderer = Renderer::new(
-            astria_renderer.device(),
+            &astria_renderer.device(),
             astria_renderer.queue(),
-            window.scale_factor() as f32,
-            None,
+            astria_renderer.device().features(),
+            astria_renderer.device().limits(),
+            wgpu::TextureFormat::Bgra8UnormSrgb,
         );
 
         // Create initial document
@@ -96,8 +97,8 @@ impl App {
         if let Ok(()) = self.astria_renderer.render() {
             // After scene render, render UI on top
             self.renderer.update_buffers(
-                self.astria_renderer.device(),
-                self.astria_renderer.queue(),
+                &astria_renderer.device(),
+                astria_renderer.queue(),
                 &clipped_primitives,
                 &screen_descriptor,
             );
