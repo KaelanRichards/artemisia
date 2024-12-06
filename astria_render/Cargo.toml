@@ -4,3 +4,13 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+wgpu = "0.18"
+pollster = "0.3"
+bytemuck = { version = "1.14", features = ["derive"] }
+image = { version = "0.24", features = ["png", "jpeg"] }
+glam = "0.24"
+anyhow = "1.0"
+thiserror = "1.0"
+aurion_core = { path = "../aurion_core" }
+winit = "0.29"
+raw-window-handle = "0.5"

@@ -4,3 +4,21 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+aurion_core = { path = "../aurion_core" }
+aurion_std_nodes = { path = "../aurion_std_nodes" }
+meridian_document = { path = "../meridian_document" }
+astria_render = { path = "../astria_render" }
+egui = "0.24"
+egui-wgpu = "0.24"
+egui-winit = "0.24"
+winit = "0.29"
+wgpu = "0.18"
+pollster = "0.3"
+image = "0.24"
+uuid = { version = "1.6", features = ["v4", "serde"] }
+parking_lot = "0.12"
+anyhow = "1.0"
+thiserror = "1.0"
+log = "0.4"
+env_logger = "0.10"
+rfd = "0.12" # For native file dialogs
