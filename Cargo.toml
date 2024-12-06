@@ -1,0 +1,10 @@
+[workspace]
+members = [
+  "aurion_core",
+  "aurion_std_nodes",
+  "meridian_document",
+  "astria_render",
+  "polaris_app",
+  "solaris_ui_desktop",
+  "aurion_plugins"
+]
