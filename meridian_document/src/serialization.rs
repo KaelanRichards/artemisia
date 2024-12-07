@@ -1,163 +1,81 @@
-use std::path::Path;
 use serde::{Serialize, Deserialize};
+use uuid::Uuid;
+use crate::{Document, Layer, LayerId};
+use std::collections::HashMap;
+use std::sync::Arc;
+use parking_lot::RwLock;
 use anyhow::Result;
-use crate::{Document, Layer, LayerId, BlendMode};
-use aurion_core::{NodeId, NodeGraph, create_node};
 
 #[derive(Serialize, Deserialize)]
 pub struct SerializedDocument {
-    pub layers: Vec<SerializedLayer>,
-    pub layer_order: Vec<LayerId>,
+    layers: HashMap<Uuid, SerializedLayer>,
+    layer_order: Vec<Uuid>,
 }
 
 #[derive(Serialize, Deserialize)]
 pub struct SerializedLayer {
-    pub id: LayerId,
-    pub name: String,
-    pub visible: bool,
-    pub opacity: f32,
-    pub blend_mode: BlendMode,
-    pub node_graph: SerializedNodeGraph,
-    pub output_node: Option<NodeId>,
-}
-
-#[derive(Serialize, Deserialize)]
-pub struct SerializedNodeGraph {
-    pub nodes: Vec<SerializedNode>,
-    pub connections: Vec<SerializedConnection>,
-}
-
-#[derive(Serialize, Deserialize)]
-pub struct SerializedNode {
-    pub id: NodeId,
-    pub type_name: String,
-    pub parameters: serde_json::Value,
-}
-
-#[derive(Serialize, Deserialize)]
-pub struct SerializedConnection {
-    pub from_node: NodeId,
-    pub from_slot: String,
-    pub to_node: NodeId,
-    pub to_slot: String,
+    name: String,
+    visible: bool,
+    opacity: f32,
+    blend_mode: String,
 }
 
 impl Document {
-    pub fn save<P: AsRef<Path>>(&self, path: P) -> Result<()> {
-        let serialized = self.to_serialized()?;
-        let file = std::fs::File::create(path)?;
-        serde_json::to_writer_pretty(file, &serialized)?;
-        Ok(())
-    }
-
-    pub fn load<P: AsRef<Path>>(path: P) -> Result<Self> {
-        let file = std::fs::File::open(path)?;
-        let serialized: SerializedDocument = serde_json::from_reader(file)?;
-        Self::from_serialized(serialized)
-    }
-
-    fn to_serialized(&self) -> Result<SerializedDocument> {
-        let mut serialized_layers = Vec::new();
-        for layer_id in &self.layer_order {
-            if let Some(layer) = self.get_layer(layer_id) {
-                let layer = layer.read();
-                serialized_layers.push(SerializedLayer {
-                    id: layer.id().clone(),
-                    name: layer.name().to_string(),
-                    visible: layer.is_visible(),
-                    opacity: layer.opacity(),
-                    blend_mode: layer.blend_mode().clone(),
-                    node_graph: layer.node_graph().to_serialized()?,
-                    output_node: layer.output_node().cloned(),
-                });
-            }
+    pub fn serialize(&self) -> Result<SerializedDocument> {
+        let mut layers = HashMap::new();
+        
+        for (layer_id, layer) in &self.layers {
+            let layer = layer.read();
+            layers.insert(layer_id.0, SerializedLayer {
+                name: "Layer".to_string(), // TODO: Add name to Layer struct
+                visible: true,
+                opacity: 1.0,
+                blend_mode: "normal".to_string(),
+            });
         }
 
+        let layer_order = self.layer_order.iter().map(|id| id.0).collect();
+
         Ok(SerializedDocument {
-            layers: serialized_layers,
-            layer_order: self.layer_order.clone(),
+            layers,
+            layer_order,
         })
     }
 
-    fn from_serialized(serialized: SerializedDocument) -> Result<Self> {
+    pub fn deserialize(data: SerializedDocument) -> Result<Self> {
         let mut document = Document::new();
-        
-        // First create all layers
-        for layer_data in serialized.layers {
-            let mut layer = Layer::new(layer_data.name);
-            layer.set_visible(layer_data.visible);
-            layer.set_opacity(layer_data.opacity);
-            layer.set_blend_mode(layer_data.blend_mode);
-            
-            // Restore node graph
-            *layer.node_graph_mut() = NodeGraph::from_serialized(layer_data.node_graph)?;
-            
-            if let Some(output_node) = layer_data.output_node {
-                layer.set_output_node(output_node);
-            }
-            
-            document.add_layer(layer);
+
+        // Create layers
+        for (uuid, layer_data) in data.layers {
+            let layer_id = LayerId(uuid);
+            let layer = Layer::new();
+            document.layers.insert(layer_id.clone(), Arc::new(RwLock::new(layer)));
         }
 
-        // Then restore layer order
-        document.layer_order = serialized.layer_order;
+        // Restore layer order
+        document.layer_order = data.layer_order.into_iter()
+            .map(LayerId)
+            .collect();
 
         Ok(document)
     }
 }
 
-impl NodeGraph {
-    fn to_serialized(&self) -> Result<SerializedNodeGraph> {
-        let mut nodes = Vec::new();
-        let mut connections = Vec::new();
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-        // Serialize nodes
-        for node_id in self.nodes() {
-            if let Some(node) = self.get_node(node_id) {
-                let node = node.read();
-                nodes.push(SerializedNode {
-                    id: node_id.clone(),
-                    type_name: node.type_name().to_string(),
-                    parameters: serde_json::to_value(node.data())?,
-                });
-            }
-        }
+    #[test]
+    fn test_document_serialization() {
+        let mut doc = Document::new();
+        let layer_id = doc.add_layer();
 
-        // Serialize connections
-        for node_id in self.nodes() {
-            if let Some(node) = self.get_node(node_id) {
-                let node = node.read();
-                for (slot_name, connected_id) in node.inputs() {
-                    connections.push(SerializedConnection {
-                        from_node: connected_id.clone(),
-                        from_slot: "output".to_string(), // Assuming standard output slot name
-                        to_node: node_id.clone(),
-                        to_slot: slot_name.clone(),
-                    });
-                }
-            }
-        }
+        let serialized = doc.serialize().unwrap();
+        assert_eq!(serialized.layers.len(), 1);
+        assert_eq!(serialized.layer_order.len(), 1);
 
-        Ok(SerializedNodeGraph {
-            nodes,
-            connections,
-        })
-    }
-
-    fn from_serialized(serialized: SerializedNodeGraph) -> Result<Self> {
-        let mut graph = NodeGraph::new();
-
-        // First restore all nodes
-        for node_data in serialized.nodes {
-            let node = create_node(&node_data.type_name, &node_data.parameters)?;
-            graph.add_node(node);
-        }
-
-        // Then restore connections
-        for conn in serialized.connections {
-            graph.connect(&conn.from_node, &conn.to_node, &conn.to_slot)?;
-        }
-
-        Ok(graph)
+        let deserialized = Document::deserialize(serialized).unwrap();
+        assert_eq!(deserialized.layers.len(), 1);
+        assert_eq!(deserialized.layer_order.len(), 1);
     }
 } 

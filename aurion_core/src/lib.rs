@@ -4,10 +4,11 @@ use thiserror::Error;
 use serde::{Serialize, Deserialize};
 use uuid::Uuid;
 use petgraph::graph::{DiGraph, NodeIndex};
+use petgraph::visit::EdgeRef;
 use parking_lot::RwLock;
 use std::sync::Arc;
 use std::fmt::Debug;
-use tracing::{debug, error, info, instrument, warn};
+use tracing::{debug, error, instrument};
 
 #[derive(Error, Debug)]
 pub enum NodeError {
@@ -65,13 +66,12 @@ pub trait NodeData: Send + Sync + Debug + 'static {
     fn type_name(&self) -> &'static str;
     fn compute(&self, inputs: &[Box<dyn Any>]) -> Result<Box<dyn Any>, NodeError>;
     
-    // New debug methods
     fn get_debug_info(&self) -> String {
         format!("Node type: {}", self.type_name())
     }
     
-    fn validate_input(&self, input: &dyn Any) -> Result<(), NodeError> {
-        Ok(()) // Default implementation
+    fn validate_input(&self, _input: &dyn Any) -> Result<(), NodeError> {
+        Ok(())
     }
 }
 
@@ -120,10 +120,9 @@ impl Node {
     pub fn validate(&self) -> Result<(), NodeError> {
         debug!("Validating node");
         for (input_name, _) in &self.inputs {
-            if self.get_input(input_name).is_none() {
-                error!("Missing required input: {}", input_name);
-                return Err(NodeError::MissingInput(input_name.clone()));
-            }
+            debug!("Checking input: {}", input_name);
+            // For node validation, we just check if the input is registered
+            // The graph validation will check if the input node exists
         }
         debug!("Node validation successful");
         Ok(())
@@ -178,6 +177,10 @@ impl NodeGraph {
             node_indices: HashMap::new(),
             debug_mode: debug,
         }
+    }
+
+    pub fn get_node_ids(&self) -> Vec<NodeId> {
+        self.nodes.keys().cloned().collect()
     }
 
     #[instrument(skip(self, node), fields(node_id = %node.id().to_string()))]
@@ -256,10 +259,12 @@ impl NodeGraph {
     #[instrument(skip(self))]
     pub fn validate(&self) -> Result<(), NodeError> {
         debug!("Validating graph");
+        // First validate each node's internal state
         for node in self.nodes.values() {
             node.read().validate()?;
         }
 
+        // Then validate node connections
         for node in self.nodes.values() {
             let node = node.read();
             for (input_name, input_id) in &node.inputs {
@@ -316,6 +321,14 @@ mod tests {
     use super::*;
     use std::any::Any;
 
+    fn init_test_logging() {
+        let _ = tracing_subscriber::fmt()
+            .with_thread_ids(true)
+            .with_file(true)
+            .with_line_number(true)
+            .try_init();
+    }
+
     #[derive(Debug)]
     struct TestNode {
         value: i32,
@@ -348,20 +361,23 @@ mod tests {
 
     #[test]
     fn test_create_graph() {
-        let mut graph = NodeGraph::new();
+        init_test_logging();
+        let graph = NodeGraph::new();
         assert!(graph.nodes.is_empty());
     }
 
     #[test]
     fn test_add_node() {
+        init_test_logging();
         let mut graph = NodeGraph::new();
         let node = Node::new(Box::new(TestNode { value: 42 }));
-        let id = graph.add_node(node);
-        assert!(graph.get_node(&id).is_some());
+        let _id = graph.add_node(node);
+        assert_eq!(graph.nodes.len(), 1);
     }
 
     #[test]
     fn test_node_not_found() {
+        init_test_logging();
         let graph = NodeGraph::new();
         let id = NodeId::new();
         let result = graph.evaluate(&id);
@@ -370,6 +386,7 @@ mod tests {
 
     #[test]
     fn test_cycle_detection() {
+        init_test_logging();
         let mut graph = NodeGraph::new();
         let node1 = Node::new(Box::new(TestNode { value: 1 }));
         let node2 = Node::new(Box::new(TestNode { value: 2 }));
@@ -381,17 +398,18 @@ mod tests {
         assert!(graph.connect(&id1, &id2, "input").is_ok());
         assert!(matches!(
             graph.connect(&id2, &id1, "input"),
-            Err(NodeError::CycleDetected)
+            Err(NodeError::CycleDetected { from: _, to: _ })
         ));
     }
 
     #[test]
     fn test_missing_input_validation() {
+        init_test_logging();
         let mut graph = NodeGraph::new();
         let mut node = Node::new(Box::new(TestNode { value: 1 }));
         node.inputs.insert("required_input".to_string(), NodeId::new());
         
-        let id = graph.add_node(node);
+        let _id = graph.add_node(node);
         assert!(matches!(
             graph.validate(),
             Err(NodeError::NodeNotFound(_))
@@ -400,6 +418,7 @@ mod tests {
 
     #[test]
     fn test_invalid_input_type() {
+        init_test_logging();
         let mut graph = NodeGraph::new();
         let node = Node::new(Box::new(TestNode { value: 1 }));
         let id = graph.add_node(node);
@@ -421,14 +440,21 @@ mod tests {
 
     #[test]
     fn test_node_validation() {
+        init_test_logging();
+        // Test case 1: Node with no inputs should validate successfully
         let node = Node::new(Box::new(TestNode { value: 1 }));
         assert!(node.validate().is_ok());
 
+        // Test case 2: Node with input should validate successfully at node level
         let mut node = Node::new(Box::new(TestNode { value: 1 }));
-        node.inputs.insert("required_input".to_string(), NodeId::new());
-        assert!(matches!(
-            node.validate(),
-            Err(NodeError::MissingInput(_))
-        ));
+        let input_name = "required_input".to_string();
+        node.inputs.insert(input_name.clone(), NodeId::new());
+        assert!(node.validate().is_ok(), "Node validation should succeed, graph validation checks connections");
+
+        // Test case 3: Graph validation should fail for missing input nodes
+        let mut graph = NodeGraph::new();
+        graph.add_node(node);
+        let graph_validation = graph.validate();
+        assert!(matches!(graph_validation, Err(NodeError::NodeNotFound(_))));
     }
 }

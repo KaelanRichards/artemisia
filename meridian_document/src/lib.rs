@@ -19,15 +19,13 @@ pub enum DocumentError {
     LayerNotFound(Uuid),
     #[error("Node error: {0}")]
     NodeError(#[from] NodeError),
-    #[error("Invalid operation: {0}")]
-    InvalidOperation(String),
     #[error("History error: {0}")]
     HistoryError(#[from] HistoryError),
-    #[error("Blend error: {0}")]
-    BlendError(String),
+    #[error("Other error: {0}")]
+    Other(String),
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Hash, Eq, PartialEq)]
 pub struct LayerId(Uuid);
 
 impl LayerId {
@@ -36,64 +34,23 @@ impl LayerId {
     }
 }
 
-#[derive(Debug)]
 pub struct Layer {
-    id: LayerId,
-    name: String,
-    visible: bool,
-    opacity: f32,
-    blend_mode: BlendMode,
     node_graph: NodeGraph,
-    output_node: Option<NodeId>,
+    opacity: f32,
+    visible: bool,
+    name: String,
+    blend_mode: BlendMode,
 }
 
 impl Layer {
-    pub fn new(name: String) -> Self {
+    pub fn new() -> Self {
         Self {
-            id: LayerId::new(),
-            name,
-            visible: true,
-            opacity: 1.0,
-            blend_mode: BlendMode::Normal,
             node_graph: NodeGraph::new(),
-            output_node: None,
+            opacity: 1.0,
+            visible: true,
+            name: "New Layer".to_string(),
+            blend_mode: BlendMode::Normal,
         }
-    }
-
-    pub fn id(&self) -> &LayerId {
-        &self.id
-    }
-
-    pub fn name(&self) -> &str {
-        &self.name
-    }
-
-    pub fn set_name(&mut self, name: String) {
-        self.name = name;
-    }
-
-    pub fn is_visible(&self) -> bool {
-        self.visible
-    }
-
-    pub fn set_visible(&mut self, visible: bool) {
-        self.visible = visible;
-    }
-
-    pub fn opacity(&self) -> f32 {
-        self.opacity
-    }
-
-    pub fn set_opacity(&mut self, opacity: f32) {
-        self.opacity = opacity.clamp(0.0, 1.0);
-    }
-
-    pub fn blend_mode(&self) -> BlendMode {
-        self.blend_mode
-    }
-
-    pub fn set_blend_mode(&mut self, mode: BlendMode) {
-        self.blend_mode = mode;
     }
 
     pub fn node_graph(&self) -> &NodeGraph {
@@ -104,19 +61,44 @@ impl Layer {
         &mut self.node_graph
     }
 
-    pub fn set_output_node(&mut self, node_id: NodeId) {
-        self.output_node = Some(node_id);
+    pub fn opacity(&self) -> f32 {
+        self.opacity
     }
 
-    pub fn output_node(&self) -> Option<&NodeId> {
-        self.output_node.as_ref()
+    pub fn set_opacity(&mut self, opacity: f32) {
+        self.opacity = opacity.clamp(0.0, 1.0);
     }
 
-    pub fn evaluate(&self) -> Result<Box<dyn std::any::Any>, NodeError> {
-        match &self.output_node {
-            Some(node_id) => self.node_graph.evaluate(node_id),
-            None => Err(NodeError::MissingInput),
-        }
+    pub fn is_visible(&self) -> bool {
+        self.visible
+    }
+
+    pub fn set_visible(&mut self, visible: bool) {
+        self.visible = visible;
+    }
+
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    pub fn set_name(&mut self, name: String) {
+        self.name = name;
+    }
+
+    pub fn blend_mode(&self) -> BlendMode {
+        self.blend_mode
+    }
+
+    pub fn set_blend_mode(&mut self, mode: BlendMode) {
+        self.blend_mode = mode;
+    }
+}
+
+impl std::fmt::Debug for Layer {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Layer")
+            .field("node_graph", &"NodeGraph")
+            .finish()
     }
 }
 
@@ -132,19 +114,51 @@ impl Document {
         Self {
             layers: HashMap::new(),
             layer_order: Vec::new(),
-            history: History::new(100),
+            history: History::new(),
         }
     }
 
-    pub fn add_layer(&mut self, layer: Layer) -> LayerId {
-        let id = layer.id().clone();
+    pub fn save<P: AsRef<std::path::Path>>(&self, path: P) -> Result<(), DocumentError> {
+        let serialized = self.serialize()
+            .map_err(|e| DocumentError::Other(format!("Failed to serialize document: {}", e)))?;
+        let file = std::fs::File::create(path)
+            .map_err(|e| DocumentError::Other(format!("Failed to create file: {}", e)))?;
+        serde_json::to_writer_pretty(file, &serialized)
+            .map_err(|e| DocumentError::Other(format!("Failed to write document: {}", e)))?;
+        Ok(())
+    }
+
+    pub fn load<P: AsRef<std::path::Path>>(path: P) -> Result<Self, DocumentError> {
+        let file = std::fs::File::open(path)
+            .map_err(|e| DocumentError::Other(format!("Failed to open file: {}", e)))?;
+        let serialized: serialization::SerializedDocument = serde_json::from_reader(file)
+            .map_err(|e| DocumentError::Other(format!("Failed to deserialize document: {}", e)))?;
+        Self::deserialize(serialized)
+            .map_err(|e| DocumentError::Other(format!("Failed to load document: {}", e)))
+    }
+
+    pub fn layer_count(&self) -> usize {
+        self.layers.len()
+    }
+
+    pub fn layers(&self) -> impl Iterator<Item = &LayerId> {
+        self.layer_order.iter()
+    }
+
+    pub fn evaluate_all(&self) -> Result<Vec<Box<dyn std::any::Any>>, DocumentError> {
+        self.render()
+    }
+
+    pub fn add_layer(&mut self) -> LayerId {
+        let id = LayerId::new();
+        let layer = Layer::new();
         self.layers.insert(id.clone(), Arc::new(RwLock::new(layer)));
         self.layer_order.push(id.clone());
         id
     }
 
     pub fn remove_layer(&mut self, id: &LayerId) -> Result<(), DocumentError> {
-        self.layers.remove(id).ok_or(DocumentError::LayerNotFound(id.0))?;
+        self.layers.remove(id).ok_or_else(|| DocumentError::LayerNotFound(id.0))?;
         self.layer_order.retain(|layer_id| layer_id != id);
         Ok(())
     }
@@ -159,83 +173,51 @@ impl Document {
         }
 
         if new_index >= self.layer_order.len() {
-            return Err(DocumentError::InvalidOperation("Invalid layer index".to_string()));
+            return Err(DocumentError::Other("Invalid layer index".to_string()));
         }
 
         let current_index = self.layer_order.iter().position(|x| x == id)
-            .ok_or_else(|| DocumentError::InvalidOperation("Layer not found in order".to_string()))?;
+            .ok_or_else(|| DocumentError::Other("Layer not found in order".to_string()))?;
 
-        let id = self.layer_order.remove(current_index);
-        self.layer_order.insert(new_index, id);
+        if current_index != new_index {
+            let layer_id = self.layer_order.remove(current_index);
+            self.layer_order.insert(new_index, layer_id);
+        }
 
         Ok(())
     }
 
-    pub fn layer_count(&self) -> usize {
-        self.layers.len()
-    }
-
-    pub fn layers(&self) -> impl Iterator<Item = &LayerId> {
-        self.layer_order.iter()
-    }
-
-    pub fn evaluate_all(&self) -> Result<Vec<Box<dyn std::any::Any>>, DocumentError> {
+    pub fn render(&self) -> Result<Vec<Box<dyn std::any::Any>>, DocumentError> {
         let mut results = Vec::new();
-        let mut composite = None;
 
         for layer_id in &self.layer_order {
             if let Some(layer) = self.get_layer(layer_id) {
                 let layer = layer.read();
-                if layer.is_visible() {
-                    if let Ok(result) = layer.evaluate() {
-                        if let Some(image) = result.downcast_ref::<DynamicImage>() {
-                            match &mut composite {
-                                Some(comp) => {
-                                    *comp = blend::blend_images(
-                                        comp,
-                                        image,
-                                        layer.blend_mode(),
-                                        layer.opacity(),
-                                    );
-                                }
-                                None => {
-                                    composite = Some(image.clone());
-                                }
-                            }
-                        }
+                for node_id in layer.node_graph.get_node_ids() {
+                    let result = layer.node_graph.evaluate(&node_id)?;
+                    if let Some(image) = result.downcast_ref::<DynamicImage>() {
+                        results.push(Box::new(image.clone()) as Box<dyn std::any::Any>);
                     }
                 }
             }
-        }
-
-        if let Some(final_image) = composite {
-            results.push(Box::new(final_image));
         }
 
         Ok(results)
     }
 
     pub fn execute_command(&mut self, command: Box<dyn Command>) -> Result<(), DocumentError> {
-        self.history.execute(command)?;
+        self.history.execute(command).map_err(|e| DocumentError::Other(e.to_string()))?;
         Ok(())
     }
 
     pub fn undo(&mut self) -> Result<(), DocumentError> {
-        self.history.undo()?;
+        self.history.undo().map_err(|e| DocumentError::Other(e.to_string()))?;
         Ok(())
     }
 
     pub fn redo(&mut self) -> Result<(), DocumentError> {
-        self.history.redo()?;
+        self.history.redo().map_err(|e| DocumentError::Other(e.to_string()))?;
         Ok(())
-    }
-
-    pub fn can_undo(&self) -> bool {
-        self.history.can_undo()
-    }
-
-    pub fn can_redo(&self) -> bool {
-        self.history.can_redo()
     }
 }
 
@@ -252,8 +234,8 @@ mod tests {
     #[test]
     fn test_add_layer() {
         let mut doc = Document::new();
-        let layer = Layer::new("Test Layer".to_string());
-        let id = doc.add_layer(layer);
+        let layer = Layer::new();
+        let id = doc.add_layer();
         assert_eq!(doc.layer_count(), 1);
         assert!(doc.get_layer(&id).is_some());
     }
@@ -261,8 +243,8 @@ mod tests {
     #[test]
     fn test_layer_operations() {
         let mut doc = Document::new();
-        let layer = Layer::new("Layer 1".to_string());
-        let id = doc.add_layer(layer);
+        let layer = Layer::new();
+        let id = doc.add_layer();
 
         let layer = doc.get_layer(&id).unwrap();
         let mut layer = layer.write();

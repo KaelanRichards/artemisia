@@ -9,3 +9,13 @@ members = [
   "solaris_ui_desktop",
   "aurion_plugins"
 ]
+
+[workspace.dependencies]
+tracing = "0.1"
+tracing-subscriber = "0.3"
+petgraph = { version = "0.6", features = ["stable_graph"] }
+chrono = "0.4"
+xilem = { git = "https://github.com/linebender/xilem.git" }
+masonry = { git = "https://github.com/linebender/xilem.git", package = "masonry" }
+vello = { git = "https://github.com/linebender/vello.git" }
+parley = { git = "https://github.com/linebender/parley.git" }

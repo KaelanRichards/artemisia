@@ -1,68 +1,10 @@
-use aurion_core::{NodeData, NodeError};
-use image::{DynamicImage, RgbaImage, Rgba};
-use thiserror::Error;
 use std::any::Any;
-use tokio::runtime::Runtime;
-use anyhow::Result;
-use std::sync::Arc;
+use aurion_core::{NodeData, NodeError};
+use image::{DynamicImage, GenericImageView, ImageBuffer, Rgba};
 
 pub mod filters;
-pub use filters::*;
 
-#[derive(Error, Debug)]
-pub enum AiImageGenError {
-    #[error("Failed to generate image: {0}")]
-    GenerationFailed(String),
-    #[error("Network error: {0}")]
-    NetworkError(#[from] reqwest::Error),
-}
-
-#[derive(Debug, Clone)]
-pub struct AiImageGenNode {
-    prompt: String,
-    runtime: Arc<Runtime>,
-}
-
-impl AiImageGenNode {
-    pub fn new(prompt: String) -> Self {
-        Self {
-            prompt,
-            runtime: Arc::new(Runtime::new().unwrap()),
-        }
-    }
-
-    async fn generate_image(&self) -> Result<DynamicImage, AiImageGenError> {
-        // Placeholder implementation - replace with actual AI image generation
-        let mut img = RgbaImage::new(512, 512);
-        for pixel in img.pixels_mut() {
-            *pixel = Rgba([128, 128, 128, 255]);
-        }
-        Ok(DynamicImage::ImageRgba8(img))
-    }
-}
-
-impl NodeData for AiImageGenNode {
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-
-    fn as_any_mut(&mut self) -> &mut dyn Any {
-        self
-    }
-
-    fn type_name(&self) -> &'static str {
-        "AiImageGen"
-    }
-
-    fn compute(&self, _inputs: &[Box<dyn Any>]) -> Result<Box<dyn Any>, NodeError> {
-        let result = self.runtime.block_on(self.generate_image())
-            .map_err(|_| NodeError::InvalidInputType)?;
-        
-        Ok(Box::new(result))
-    }
-}
-
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct ImageNode {
     image: Option<DynamicImage>,
 }
@@ -72,8 +14,8 @@ impl ImageNode {
         Self { image: None }
     }
 
-    pub fn set_image(&mut self, image: DynamicImage) {
-        self.image = Some(image);
+    pub fn with_image(image: DynamicImage) -> Self {
+        Self { image: Some(image) }
     }
 }
 
@@ -87,35 +29,36 @@ impl NodeData for ImageNode {
     }
 
     fn type_name(&self) -> &'static str {
-        "Image"
+        "ImageNode"
     }
 
-    fn compute(&self, _inputs: &[Box<dyn Any>]) -> Result<Box<dyn Any>, NodeError> {
+    fn compute(&self, inputs: &[Box<dyn Any>]) -> Result<Box<dyn Any>, NodeError> {
+        if !inputs.is_empty() {
+            return Err(NodeError::InvalidInputType {
+                expected: "none".to_string(),
+                actual: format!("{} inputs", inputs.len()),
+            });
+        }
+
         match &self.image {
             Some(img) => Ok(Box::new(img.clone())),
-            None => Err(NodeError::MissingInput),
+            None => Err(NodeError::MissingInput("image".to_string())),
         }
     }
 }
 
-#[derive(Debug, Clone)]
-pub struct ColorAdjustNode {
-    brightness: f32,
-    contrast: f32,
-    saturation: f32,
+#[derive(Debug)]
+pub struct OutputNode {
+    image: Option<DynamicImage>,
 }
 
-impl ColorAdjustNode {
-    pub fn new(brightness: f32, contrast: f32, saturation: f32) -> Self {
-        Self {
-            brightness: brightness.clamp(0.0, 2.0),
-            contrast: contrast.clamp(0.0, 2.0),
-            saturation: saturation.clamp(0.0, 2.0),
-        }
+impl OutputNode {
+    pub fn new() -> Self {
+        Self { image: None }
     }
 }
 
-impl NodeData for ColorAdjustNode {
+impl NodeData for OutputNode {
     fn as_any(&self) -> &dyn Any {
         self
     }
@@ -125,47 +68,109 @@ impl NodeData for ColorAdjustNode {
     }
 
     fn type_name(&self) -> &'static str {
-        "ColorAdjust"
+        "OutputNode"
     }
 
     fn compute(&self, inputs: &[Box<dyn Any>]) -> Result<Box<dyn Any>, NodeError> {
-        if inputs.is_empty() {
-            return Err(NodeError::MissingInput);
+        if inputs.len() != 1 {
+            return Err(NodeError::InvalidInputType {
+                expected: "one image input".to_string(),
+                actual: format!("{} inputs", inputs.len()),
+            });
         }
 
-        let input = inputs[0].downcast_ref::<DynamicImage>()
-            .ok_or(NodeError::InvalidInputType)?;
+        let input = inputs[0]
+            .downcast_ref::<DynamicImage>()
+            .ok_or_else(|| NodeError::InvalidInputType {
+                expected: "DynamicImage".to_string(),
+                actual: "unknown".to_string(),
+            })?;
 
-        let mut output = input.clone();
-        
-        // Apply adjustments
-        output = output.adjust_contrast(self.contrast);
-        output = output.brighten((self.brightness * 255.0) as i32);
-        
-        if self.saturation != 1.0 {
-            output = output.adjust_contrast(self.saturation);
-        }
-
-        Ok(Box::new(output))
+        Ok(Box::new(input.clone()))
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
+#[derive(Debug)]
+pub struct BlendNode {
+    mode: BlendMode,
+}
 
-    #[test]
-    fn test_image_node() {
-        let node = ImageNode::new();
-        assert!(node.compute(&[]).is_err());
+#[derive(Clone, Copy, Debug)]
+pub enum BlendMode {
+    Normal,
+    Add,
+    Multiply,
+}
+
+impl BlendNode {
+    pub fn new(mode: BlendMode) -> Self {
+        Self { mode }
     }
 
-    #[test]
-    fn test_color_adjust() {
-        let node = ColorAdjustNode::new(1.0, 1.0, 1.0);
-        let input_image = DynamicImage::new_rgba8(100, 100);
-        let inputs: Vec<Box<dyn Any>> = vec![Box::new(input_image)];
-        let result = node.compute(&inputs);
-        assert!(result.is_ok());
+    fn blend_pixels(&self, a: &Rgba<u8>, b: &Rgba<u8>) -> Rgba<u8> {
+        match self.mode {
+            BlendMode::Normal => *b,
+            BlendMode::Add => {
+                let r = a[0].saturating_add(b[0]);
+                let g = a[1].saturating_add(b[1]);
+                let b_val = a[2].saturating_add(b[2]);
+                let alpha = a[3].saturating_add(b[3]);
+                Rgba([r, g, b_val, alpha])
+            }
+            BlendMode::Multiply => {
+                let r = ((a[0] as f32 / 255.0) * (b[0] as f32 / 255.0) * 255.0) as u8;
+                let g = ((a[1] as f32 / 255.0) * (b[1] as f32 / 255.0) * 255.0) as u8;
+                let b_val = ((a[2] as f32 / 255.0) * (b[2] as f32 / 255.0) * 255.0) as u8;
+                let alpha = ((a[3] as f32 / 255.0) * (b[3] as f32 / 255.0) * 255.0) as u8;
+                Rgba([r, g, b_val, alpha])
+            }
+        }
+    }
+}
+
+impl NodeData for BlendNode {
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+
+    fn as_any_mut(&mut self) -> &mut dyn Any {
+        self
+    }
+
+    fn type_name(&self) -> &'static str {
+        "BlendNode"
+    }
+
+    fn compute(&self, inputs: &[Box<dyn Any>]) -> Result<Box<dyn Any>, NodeError> {
+        if inputs.len() != 2 {
+            return Err(NodeError::InvalidInputType {
+                expected: "two image inputs".to_string(),
+                actual: format!("{} inputs", inputs.len()),
+            });
+        }
+
+        let image1 = inputs[0]
+            .downcast_ref::<DynamicImage>()
+            .ok_or_else(|| NodeError::InvalidInputType {
+                expected: "DynamicImage".to_string(),
+                actual: "unknown".to_string(),
+            })?;
+
+        let image2 = inputs[1]
+            .downcast_ref::<DynamicImage>()
+            .ok_or_else(|| NodeError::InvalidInputType {
+                expected: "DynamicImage".to_string(),
+                actual: "unknown".to_string(),
+            })?;
+
+        let mut output = ImageBuffer::new(image1.width(), image1.height());
+
+        for (x, y, pixel) in output.enumerate_pixels_mut() {
+            let p1 = image1.get_pixel(x, y);
+            let p2 = image2.get_pixel(x, y);
+            *pixel = self.blend_pixels(&p1, &p2);
+        }
+
+        Ok(Box::new(DynamicImage::ImageRgba8(output)))
     }
 }

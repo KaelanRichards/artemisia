@@ -1,13 +1,20 @@
-use aurion_std_nodes;
+use aurion_core::{NodeGraph, NodeError, Node};
+use aurion_std_nodes::{ImageNode, BlendNode, BlendMode};
 
-fn main() {
-    println!("Starting Polaris Application for Artemisia...");
+fn main() -> Result<(), NodeError> {
+    let mut graph = NodeGraph::new();
 
-    let ai_node = aurion_std_nodes::AiImageGenNode::new("A picturesque sunset over mountains");
-    match ai_node.run() {
-        Ok(data) => {
-            println!("Received {} bytes of AI-generated image data", data.len());
-        }
-        Err(e) => eprintln!("Error: {}", e),
-    }
+    // Create nodes
+    let image_node = Node::new(Box::new(ImageNode::new()));
+    let blend_node = Node::new(Box::new(BlendNode::new(BlendMode::Normal)));
+
+    // Add nodes to graph
+    let image_id = graph.add_node(image_node);
+    let blend_id = graph.add_node(blend_node);
+
+    // Connect nodes
+    graph.connect(&image_id, &blend_id, "input")?;
+
+    println!("Graph created successfully!");
+    Ok(())
 }

@@ -7,18 +7,12 @@ edition = "2021"
 aurion_core = { path = "../aurion_core" }
 aurion_std_nodes = { path = "../aurion_std_nodes" }
 meridian_document = { path = "../meridian_document" }
-astria_render = { path = "../astria_render" }
-egui = "0.23"
-egui-wgpu = "0.23"
-egui-winit = "0.23"
-winit = "0.28"
-wgpu = "0.17"
-pollster = "0.3"
-image = "0.24"
-uuid = { version = "1.6", features = ["v4", "serde"] }
-parking_lot = "0.12"
+xilem = { workspace = true }
+masonry = { workspace = true }
+vello = { workspace = true }
+parley = { workspace = true }
 anyhow = "1.0"
-thiserror = "1.0"
-log = "0.4"
-env_logger = "0.10"
-rfd = "0.12" # For native file dialogs
+parking_lot = "0.12"
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+winit = "0.30"
